@@ -40,11 +40,9 @@ function splitText(text: string, size = 800, overlap = 150): string[] {
 }
 
 async function parsePDF(buffer: Buffer): Promise<string> {
-  // Import the internal lib directly to avoid pdf-parse test file loading issue
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pdfParse = require('pdf-parse/lib/pdf-parse.js');
-  const data = await pdfParse(buffer);
-  return data.text;
+  const { extractText } = await import('unpdf');
+  const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
+  return text as string;
 }
 
 function getPDFPaths(): { filename: string; filepath: string }[] {
