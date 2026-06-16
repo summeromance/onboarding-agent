@@ -2,7 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getOpenAI(): OpenAI {
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+}
 
 // On Vercel, project files are read-only; uploads go to /tmp
 const IS_VERCEL = !!process.env.VERCEL;
@@ -78,7 +80,7 @@ export async function buildIndex(force = false): Promise<void> {
       const batchSize = 20;
       for (let i = 0; i < textChunks.length; i += batchSize) {
         const batch = textChunks.slice(i, i + batchSize);
-        const response = await openai.embeddings.create({
+        const response = await getOpenAI().embeddings.create({
           model: 'text-embedding-3-small',
           input: batch,
         });
@@ -111,7 +113,7 @@ export async function queryRAG(
     };
   }
 
-  const embRes = await openai.embeddings.create({
+  const embRes = await getOpenAI().embeddings.create({
     model: 'text-embedding-3-small',
     input: message,
   });
@@ -128,7 +130,7 @@ export async function queryRAG(
 
   const sources = [...new Set(topChunks.map((s) => s.chunk.filename))];
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
       {
