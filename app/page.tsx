@@ -9,8 +9,9 @@ interface Message {
 }
 
 interface Document {
+  id: string;
   filename: string;
-  source: 'bundled' | 'uploaded';
+  status: string;
 }
 
 export default function Home() {
@@ -92,7 +93,7 @@ export default function Home() {
       const data = await res.json();
       if (res.ok) {
         await fetchDocuments();
-        setIndexStatus(`"${data.filename}" 업로드 완료. 인덱스 재구성이 필요합니다.`);
+        setIndexStatus(`"${data.document?.filename}" 업로드 완료. OpenAI가 인덱싱 중입니다.`);
       } else {
         setIndexStatus(data.error ?? '업로드 실패');
       }
@@ -114,20 +115,29 @@ export default function Home() {
     if (file && replaceTarget) uploadFile(file, replaceTarget);
   };
 
-  const deleteDocument = async (filename: string) => {
-    await fetch(`/api/documents/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+  const deleteDocument = async (doc: Document) => {
+    await fetch(`/api/documents/${encodeURIComponent(doc.id)}`, { method: 'DELETE' });
     await fetchDocuments();
-    setIndexStatus(`"${filename}" 삭제 완료. 인덱스 재구성이 필요합니다.`);
+    setIndexStatus(`"${doc.filename}" 삭제 완료.`);
   };
 
   const reindex = async () => {
     setIndexing(true);
-    setIndexStatus('인덱싱 중...');
+    setIndexStatus('동기화 중...');
     try {
-      await fetch('/api/reindex', { method: 'POST' });
-      setIndexStatus('✅ 인덱스 재구성 완료!');
+      const res = await fetch('/api/reindex', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        await fetchDocuments();
+        const msg = data.uploaded?.length
+          ? `✅ ${data.uploaded.length}개 업로드됨, ${data.skipped?.length ?? 0}개 기존 유지`
+          : `✅ 모든 문서가 이미 동기화되어 있습니다.`;
+        setIndexStatus(msg);
+      } else {
+        setIndexStatus(data.error ?? '동기화 실패');
+      }
     } catch {
-      setIndexStatus('인덱싱 중 오류가 발생했습니다.');
+      setIndexStatus('동기화 중 오류가 발생했습니다.');
     } finally {
       setIndexing(false);
     }
@@ -229,8 +239,8 @@ export default function Home() {
                 <span className="text-base flex-shrink-0 mt-0.5">📄</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-gray-700 break-all leading-snug">{doc.filename}</p>
-                  {doc.source === 'uploaded' && (
-                    <span className="text-[10px] text-blue-500">업로드됨</span>
+                  {doc.status !== 'completed' && (
+                    <span className="text-[10px] text-amber-500">인덱싱 중...</span>
                   )}
                 </div>
                 <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
@@ -244,7 +254,7 @@ export default function Home() {
                     교체
                   </button>
                   <button
-                    onClick={() => deleteDocument(doc.filename)}
+                    onClick={() => deleteDocument(doc)}
                     className="text-[10px] text-red-400 hover:text-red-600"
                   >
                     삭제
@@ -278,7 +288,7 @@ export default function Home() {
             disabled={indexing}
             className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg py-2 text-xs font-medium transition-colors disabled:opacity-50"
           >
-            {indexing ? '인덱싱 중...' : '🔄 인덱스 재구성'}
+            {indexing ? '동기화 중...' : '🔄 문서 동기화'}
           </button>
         </div>
       </div>

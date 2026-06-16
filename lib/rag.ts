@@ -1,203 +1,133 @@
 import fs from 'fs';
 import path from 'path';
-import OpenAI from 'openai';
+import OpenAI, { toFile } from 'openai';
+
+export const BUNDLED_DIR = path.join(process.cwd(), 'rag-data');
+const VS_NAME = 'onboarding-docs';
 
 function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-// On Vercel, project files are read-only; uploads go to /tmp
-const IS_VERCEL = !!process.env.VERCEL;
-export const BUNDLED_DIR = path.join(process.cwd(), 'rag-data');
-export const UPLOAD_DIR = IS_VERCEL ? '/tmp/rag-data' : BUNDLED_DIR;
+// Cache within the same serverless instance
+let cachedVSId: string | null = process.env.OPENAI_VECTOR_STORE_ID ?? null;
 
-interface Chunk {
-  text: string;
-  embedding: number[];
+export async function getVectorStoreId(): Promise<string> {
+  if (cachedVSId) return cachedVSId;
+
+  const openai = getOpenAI();
+  const stores = await openai.vectorStores.list();
+  const existing = stores.data.find((s) => s.name === VS_NAME);
+
+  cachedVSId = existing
+    ? existing.id
+    : (await openai.vectorStores.create({ name: VS_NAME })).id;
+
+  return cachedVSId;
+}
+
+export interface DocInfo {
+  id: string;
   filename: string;
+  status: string;
 }
 
-// Module-level cache (lives for the duration of the serverless function instance)
-let cachedChunks: Chunk[] | null = null;
+export async function listDocuments(): Promise<DocInfo[]> {
+  const openai = getOpenAI();
+  const vsId = await getVectorStoreId();
+  const vsFiles = await openai.vectorStores.files.list(vsId, { limit: 100 });
 
-function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, magA = 0, magB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
-}
-
-function splitText(text: string, size = 800, overlap = 150): string[] {
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < text.length) {
-    const chunk = text.slice(start, start + size).trim();
-    if (chunk.length > 50) chunks.push(chunk);
-    start += size - overlap;
-  }
-  return chunks;
-}
-
-async function parsePDF(buffer: Buffer): Promise<string> {
-  const { extractText } = await import('unpdf');
-  const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
-  return text as string;
-}
-
-function getPDFPaths(): { filename: string; filepath: string }[] {
-  const seen = new Set<string>();
-  const results: { filename: string; filepath: string }[] = [];
-
-  for (const dir of [BUNDLED_DIR, ...(IS_VERCEL ? [UPLOAD_DIR] : [])]) {
-    if (!fs.existsSync(dir)) continue;
-    for (const f of fs.readdirSync(dir)) {
-      if (f.toLowerCase().endsWith('.pdf') && !seen.has(f)) {
-        seen.add(f);
-        results.push({ filename: f, filepath: path.join(dir, f) });
-      }
+  const results: DocInfo[] = [];
+  for (const vsFile of vsFiles.data) {
+    try {
+      const info = await openai.files.retrieve(vsFile.id);
+      results.push({ id: vsFile.id, filename: info.filename, status: vsFile.status });
+    } catch {
+      // file may have been deleted from OpenAI files but still in VS
     }
   }
-
   return results;
 }
 
-export async function buildIndex(force = false): Promise<void> {
-  if (cachedChunks && !force) return;
+export async function uploadDocument(filename: string, buffer: Buffer): Promise<DocInfo> {
+  const openai = getOpenAI();
+  const vsId = await getVectorStoreId();
 
-  const pdfs = getPDFPaths();
-  const chunks: Chunk[] = [];
+  const file = await toFile(buffer, filename, { type: 'application/pdf' });
+  const uploaded = await openai.files.create({ file, purpose: 'assistants' });
+  await openai.vectorStores.files.create(vsId, { file_id: uploaded.id });
 
-  for (const { filename, filepath } of pdfs) {
-    try {
-      const buffer = fs.readFileSync(filepath);
-      const text = await parsePDF(buffer);
-      const textChunks = splitText(text);
+  return { id: uploaded.id, filename, status: 'in_progress' };
+}
 
-      // Batch embed (max 20 per request to stay within limits)
-      const batchSize = 20;
-      for (let i = 0; i < textChunks.length; i += batchSize) {
-        const batch = textChunks.slice(i, i + batchSize);
-        const response = await getOpenAI().embeddings.create({
-          model: 'text-embedding-3-small',
-          input: batch,
-        });
-        for (let j = 0; j < batch.length; j++) {
-          chunks.push({
-            text: batch[j],
-            embedding: response.data[j].embedding,
-            filename,
-          });
-        }
-      }
-    } catch (err) {
-      console.error(`[RAG] Failed to parse ${filename}:`, err);
+export async function deleteDocument(fileId: string): Promise<void> {
+  const openai = getOpenAI();
+  const vsId = await getVectorStoreId();
+  try { await openai.vectorStores.files.delete(fileId, { vector_store_id: vsId }); } catch { /* ignore */ }
+  try { await openai.files.delete(fileId); } catch { /* ignore */ }
+}
+
+export async function syncBundledPDFs(): Promise<{ uploaded: string[]; skipped: string[] }> {
+  if (!fs.existsSync(BUNDLED_DIR)) return { uploaded: [], skipped: [] };
+
+  const pdfs = fs.readdirSync(BUNDLED_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'));
+  const existing = await listDocuments();
+  const existingNames = new Set(existing.map((d) => d.filename));
+
+  const uploaded: string[] = [];
+  const skipped: string[] = [];
+
+  for (const pdf of pdfs) {
+    if (existingNames.has(pdf)) {
+      skipped.push(pdf);
+      continue;
     }
+    const buffer = fs.readFileSync(path.join(BUNDLED_DIR, pdf));
+    await uploadDocument(pdf, buffer);
+    uploaded.push(pdf);
   }
 
-  cachedChunks = chunks;
+  return { uploaded, skipped };
 }
 
 export async function queryRAG(
   message: string,
   history: { role: 'user' | 'assistant'; content: string }[] = []
 ): Promise<{ answer: string; sources: string[] }> {
-  await buildIndex();
+  const openai = getOpenAI();
+  const vsId = await getVectorStoreId();
 
-  if (!cachedChunks || cachedChunks.length === 0) {
-    return {
-      answer: '등록된 문서가 없습니다. 오른쪽 패널에서 PDF 문서를 업로드해 주세요.',
-      sources: [],
-    };
-  }
+  const input = [
+    ...history.map((h) => ({ role: h.role, content: h.content })),
+    { role: 'user' as const, content: message },
+  ];
 
-  const embRes = await getOpenAI().embeddings.create({
-    model: 'text-embedding-3-small',
-    input: message,
-  });
-  const qEmb = embRes.data[0].embedding;
-
-  const topChunks = cachedChunks
-    .map((chunk) => ({ chunk, score: cosineSimilarity(qEmb, chunk.embedding) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
-
-  const context = topChunks
-    .map((s) => `[${s.chunk.filename}]\n${s.chunk.text}`)
-    .join('\n\n---\n\n');
-
-  const sources = [...new Set(topChunks.map((s) => s.chunk.filename))];
-
-  const response = await getOpenAI().chat.completions.create({
+  const response = await openai.responses.create({
     model: 'gpt-4o-mini',
-    messages: [
-      {
-        role: 'system',
-        content: `당신은 신입사원 온보딩을 도와주는 AI 어시스턴트입니다.
-아래 회사 문서를 참고하여 신입사원의 질문에 친절하고 정확하게 한국어로 답변하세요.
-문서에 없는 내용은 "해당 내용은 제공된 문서에서 찾을 수 없습니다"라고 솔직하게 말하세요.
-
-[참고 문서]
-${context}`,
-      },
-      ...history,
-      { role: 'user', content: message },
-    ],
+    instructions: `당신은 신입사원 온보딩을 도와주는 AI 어시스턴트입니다.
+제공된 회사 문서를 참고하여 신입사원의 질문에 친절하고 정확하게 한국어로 답변하세요.
+문서에 없는 내용은 "해당 내용은 제공된 문서에서 찾을 수 없습니다"라고 솔직하게 말하세요.`,
+    tools: [{ type: 'file_search', vector_store_ids: [vsId] }],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    input: input as any,
   });
 
-  return {
-    answer: response.choices[0].message.content ?? '',
-    sources,
-  };
-}
+  const answer = response.output_text ?? '';
 
-export function getDocumentList(): { filename: string; source: 'bundled' | 'uploaded' }[] {
-  const results: { filename: string; source: 'bundled' | 'uploaded' }[] = [];
-  const seen = new Set<string>();
-
-  if (fs.existsSync(BUNDLED_DIR)) {
-    for (const f of fs.readdirSync(BUNDLED_DIR)) {
-      if (f.toLowerCase().endsWith('.pdf')) {
-        results.push({ filename: f, source: 'bundled' });
-        seen.add(f);
+  // Extract cited filenames from annotations
+  const sources: string[] = [];
+  for (const item of response.output ?? []) {
+    if (item.type === 'message') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const content of (item as any).content ?? []) {
+        for (const ann of content.annotations ?? []) {
+          if (ann.type === 'file_citation' && ann.filename && !sources.includes(ann.filename)) {
+            sources.push(ann.filename);
+          }
+        }
       }
     }
   }
 
-  if (IS_VERCEL && fs.existsSync(UPLOAD_DIR)) {
-    for (const f of fs.readdirSync(UPLOAD_DIR)) {
-      if (f.toLowerCase().endsWith('.pdf') && !seen.has(f)) {
-        results.push({ filename: f, source: 'uploaded' });
-      }
-    }
-  }
-
-  return results;
-}
-
-export function saveDocument(filename: string, buffer: Buffer): void {
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  }
-  fs.writeFileSync(path.join(UPLOAD_DIR, filename), buffer);
-  cachedChunks = null; // invalidate cache
-}
-
-export function deleteDocument(filename: string): boolean {
-  // Try upload dir first, then bundled dir (only in local dev)
-  for (const dir of [UPLOAD_DIR, ...(IS_VERCEL ? [] : [BUNDLED_DIR])]) {
-    const filepath = path.join(dir, filename);
-    if (fs.existsSync(filepath)) {
-      fs.unlinkSync(filepath);
-      cachedChunks = null;
-      return true;
-    }
-  }
-  return false;
-}
-
-export function invalidateIndex(): void {
-  cachedChunks = null;
+  return { answer, sources };
 }

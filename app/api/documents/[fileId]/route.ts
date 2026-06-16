@@ -5,16 +5,11 @@ export const dynamic = 'force-dynamic';
 
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: Promise<{ filename: string }> }
+  { params }: { params: Promise<{ fileId: string }> }
 ) {
   try {
-    const { filename } = await params;
-    const decoded = decodeURIComponent(filename);
-    const deleted = deleteDocument(decoded);
-
-    if (!deleted) {
-      return NextResponse.json({ error: '파일을 찾을 수 없습니다.' }, { status: 404 });
-    }
+    const { fileId } = await params;
+    await deleteDocument(fileId);
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error('[/api/documents DELETE]', err);
