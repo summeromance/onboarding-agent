@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -147,9 +148,12 @@ export default function Home() {
     <div className="flex h-screen bg-gray-100 font-sans">
       {/* ── Chat Panel ── */}
       <div className="flex flex-col flex-1 min-w-0">
-        <div className="bg-blue-600 text-white px-6 py-4 shadow-md flex-shrink-0">
+        <div className="relative bg-blue-600 text-white px-6 py-4 shadow-md flex-shrink-0">
           <h1 className="text-xl font-bold tracking-tight">신입사원 온보딩 에이전트</h1>
           <p className="text-blue-200 text-xs mt-0.5">회사 문서 기반 AI 어시스턴트</p>
+          <Link href="/admin" className="absolute right-6 top-1/2 -translate-y-1/2 text-xs text-blue-200 hover:text-white transition-colors">
+            🔧 관리자
+          </Link>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
