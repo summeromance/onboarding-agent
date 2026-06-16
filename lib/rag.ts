@@ -6,7 +6,7 @@ export const BUNDLED_DIR = path.join(process.cwd(), 'rag-data');
 const VS_NAME = 'onboarding-docs';
 
 function getOpenAI(): OpenAI {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY_TEMP });
 }
 
 // Cache within the same serverless instance

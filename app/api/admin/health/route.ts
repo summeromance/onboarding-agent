@@ -17,11 +17,11 @@ export async function GET() {
   const startAll = Date.now();
 
   // ── 1. 환경변수 ───────────────────────────────────────────────
-  if (process.env.OPENAI_API_KEY) {
-    checks.push({ name: '환경변수', status: 'ok', message: 'OPENAI_API_KEY 설정됨' });
+  if (process.env.OPENAI_API_KEY_TEMP) {
+    checks.push({ name: '환경변수', status: 'ok', message: 'OPENAI_API_KEY_TEMP 설정됨' });
   } else {
-    checks.push({ name: '환경변수', status: 'error', message: 'OPENAI_API_KEY 없음' });
-    log.error('health', 'OPENAI_API_KEY 환경변수 없음');
+    checks.push({ name: '환경변수', status: 'error', message: 'OPENAI_API_KEY_TEMP 없음' });
+    log.error('health', 'OPENAI_API_KEY_TEMP 환경변수 없음');
   }
 
   // ── 2. OpenAI API 연결 ────────────────────────────────────────
