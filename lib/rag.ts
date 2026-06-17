@@ -91,8 +91,14 @@ export async function queryRAG(
 ${docsSection}`,
   });
 
+  // Gemini requires history to start with 'user' role
+  const trimmedHistory = [...history];
+  while (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
+    trimmedHistory.shift();
+  }
+
   const chat = model.startChat({
-    history: history.map((h) => ({
+    history: trimmedHistory.map((h) => ({
       role: h.role === 'user' ? 'user' : 'model',
       parts: [{ text: h.content }],
     })),
