@@ -1,29 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import OpenAI, { toFile } from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const BUNDLED_DIR = path.join(process.cwd(), 'rag-data');
-const VS_NAME = 'onboarding-docs';
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 
-function getOpenAI(): OpenAI {
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY_TEMP });
-}
-
-// Cache within the same serverless instance
-let cachedVSId: string | null = process.env.OPENAI_VECTOR_STORE_ID ?? null;
-
-export async function getVectorStoreId(): Promise<string> {
-  if (cachedVSId) return cachedVSId;
-
-  const openai = getOpenAI();
-  const stores = await openai.vectorStores.list();
-  const existing = stores.data.find((s) => s.name === VS_NAME);
-
-  cachedVSId = existing
-    ? existing.id
-    : (await openai.vectorStores.create({ name: VS_NAME })).id;
-
-  return cachedVSId;
+function getGenAI(): GoogleGenerativeAI {
+  return new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 }
 
 export interface DocInfo {
@@ -32,102 +15,91 @@ export interface DocInfo {
   status: string;
 }
 
-export async function listDocuments(): Promise<DocInfo[]> {
-  const openai = getOpenAI();
-  const vsId = await getVectorStoreId();
-  const vsFiles = await openai.vectorStores.files.list(vsId, { limit: 100 });
+export async function checkGeminiConnectivity(): Promise<void> {
+  const genai = getGenAI();
+  const model = genai.getGenerativeModel({ model: 'models/gemini-3.5-flash' });
+  await model.generateContent('ping');
+}
 
-  const results: DocInfo[] = [];
-  for (const vsFile of vsFiles.data) {
-    try {
-      const info = await openai.files.retrieve(vsFile.id);
-      results.push({ id: vsFile.id, filename: info.filename, status: vsFile.status });
-    } catch {
-      // file may have been deleted from OpenAI files but still in VS
-    }
-  }
-  return results;
+export async function listDocuments(): Promise<DocInfo[]> {
+  if (!fs.existsSync(UPLOADS_DIR)) return [];
+  const files = fs.readdirSync(UPLOADS_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'));
+  return files.map((f) => ({ id: f, filename: f, status: 'completed' }));
 }
 
 export async function uploadDocument(filename: string, buffer: Buffer): Promise<DocInfo> {
-  const openai = getOpenAI();
-  const vsId = await getVectorStoreId();
-
-  const file = await toFile(buffer, filename, { type: 'application/pdf' });
-  const uploaded = await openai.files.create({ file, purpose: 'assistants' });
-  await openai.vectorStores.files.create(vsId, { file_id: uploaded.id });
-
-  return { id: uploaded.id, filename, status: 'in_progress' };
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  const safeName = path.basename(filename);
+  fs.writeFileSync(path.join(UPLOADS_DIR, safeName), buffer);
+  return { id: safeName, filename: safeName, status: 'completed' };
 }
 
 export async function deleteDocument(fileId: string): Promise<void> {
-  const openai = getOpenAI();
-  const vsId = await getVectorStoreId();
-  try { await openai.vectorStores.files.delete(fileId, { vector_store_id: vsId }); } catch { /* ignore */ }
-  try { await openai.files.delete(fileId); } catch { /* ignore */ }
+  const safeName = path.basename(fileId);
+  const filePath = path.join(UPLOADS_DIR, safeName);
+  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 }
 
 export async function syncBundledPDFs(): Promise<{ uploaded: string[]; skipped: string[] }> {
   if (!fs.existsSync(BUNDLED_DIR)) return { uploaded: [], skipped: [] };
-
   const pdfs = fs.readdirSync(BUNDLED_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'));
-  const existing = await listDocuments();
-  const existingNames = new Set(existing.map((d) => d.filename));
+  return { uploaded: [], skipped: pdfs };
+}
 
-  const uploaded: string[] = [];
-  const skipped: string[] = [];
+async function extractPDFText(buffer: Buffer): Promise<string> {
+  const { extractText } = await import('unpdf');
+  const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
+  return text;
+}
 
-  for (const pdf of pdfs) {
-    if (existingNames.has(pdf)) {
-      skipped.push(pdf);
-      continue;
+async function loadAllDocumentTexts(): Promise<string[]> {
+  const texts: string[] = [];
+
+  for (const dir of [UPLOADS_DIR, BUNDLED_DIR]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const file of fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith('.pdf'))) {
+      try {
+        const buffer = fs.readFileSync(path.join(dir, file));
+        const text = await extractPDFText(buffer);
+        texts.push(`[문서: ${file}]\n${text}`);
+      } catch {
+        // skip unreadable files
+      }
     }
-    const buffer = fs.readFileSync(path.join(BUNDLED_DIR, pdf));
-    await uploadDocument(pdf, buffer);
-    uploaded.push(pdf);
   }
 
-  return { uploaded, skipped };
+  return texts;
 }
 
 export async function queryRAG(
   message: string,
   history: { role: 'user' | 'assistant'; content: string }[] = []
 ): Promise<{ answer: string; sources: string[] }> {
-  const openai = getOpenAI();
-  const vsId = await getVectorStoreId();
+  const genai = getGenAI();
+  const docTexts = await loadAllDocumentTexts();
+  const docsSection =
+    docTexts.length > 0
+      ? `참고 문서:\n\n${docTexts.join('\n\n---\n\n')}`
+      : '현재 업로드된 문서가 없습니다.';
 
-  const input = [
-    ...history.map((h) => ({ role: h.role, content: h.content })),
-    { role: 'user' as const, content: message },
-  ];
-
-  const response = await openai.responses.create({
-    model: 'gpt-4o-mini',
-    instructions: `당신은 신입사원 온보딩을 도와주는 AI 어시스턴트입니다.
+  const model = genai.getGenerativeModel({
+    model: 'models/gemini-3.5-flash',
+    systemInstruction: `당신은 신입사원 온보딩을 도와주는 AI 어시스턴트입니다.
 제공된 회사 문서를 참고하여 신입사원의 질문에 친절하고 정확하게 한국어로 답변하세요.
-문서에 없는 내용은 "해당 내용은 제공된 문서에서 찾을 수 없습니다"라고 솔직하게 말하세요.`,
-    tools: [{ type: 'file_search', vector_store_ids: [vsId] }],
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    input: input as any,
+문서에 없는 내용은 "해당 내용은 제공된 문서에서 찾을 수 없습니다"라고 솔직하게 말하세요.
+
+${docsSection}`,
   });
 
-  const answer = response.output_text ?? '';
+  const chat = model.startChat({
+    history: history.map((h) => ({
+      role: h.role === 'user' ? 'user' : 'model',
+      parts: [{ text: h.content }],
+    })),
+  });
 
-  // Extract cited filenames from annotations
-  const sources: string[] = [];
-  for (const item of response.output ?? []) {
-    if (item.type === 'message') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (const content of (item as any).content ?? []) {
-        for (const ann of content.annotations ?? []) {
-          if (ann.type === 'file_citation' && ann.filename && !sources.includes(ann.filename)) {
-            sources.push(ann.filename);
-          }
-        }
-      }
-    }
-  }
+  const result = await chat.sendMessage(message);
+  const answer = result.response.text();
 
-  return { answer, sources };
+  return { answer, sources: [] };
 }

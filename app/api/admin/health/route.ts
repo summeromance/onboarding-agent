@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
-import { getVectorStoreId, listDocuments, BUNDLED_DIR } from '@/lib/rag';
+import { checkGeminiConnectivity, listDocuments, BUNDLED_DIR } from '@/lib/rag';
 import { log } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -17,57 +17,50 @@ export async function GET() {
   const startAll = Date.now();
 
   // ── 1. 환경변수 ───────────────────────────────────────────────
-  if (process.env.OPENAI_API_KEY_TEMP) {
-    checks.push({ name: '환경변수', status: 'ok', message: 'OPENAI_API_KEY_TEMP 설정됨' });
+  if (process.env.GOOGLE_API_KEY) {
+    checks.push({ name: '환경변수', status: 'ok', message: 'GOOGLE_API_KEY 설정됨' });
   } else {
-    checks.push({ name: '환경변수', status: 'error', message: 'OPENAI_API_KEY_TEMP 없음' });
-    log.error('health', 'OPENAI_API_KEY_TEMP 환경변수 없음');
+    checks.push({ name: '환경변수', status: 'error', message: 'GOOGLE_API_KEY 없음' });
+    log.error('health', 'GOOGLE_API_KEY 환경변수 없음');
   }
 
-  // ── 2. OpenAI API 연결 ────────────────────────────────────────
+  // ── 2. Gemini API 연결 ────────────────────────────────────────
   const t1 = Date.now();
-  let vsId: string | null = null;
+  let geminiOk = false;
   try {
-    vsId = await getVectorStoreId();
+    await checkGeminiConnectivity();
     const latencyMs = Date.now() - t1;
-    checks.push({ name: 'OpenAI API', status: 'ok', message: `연결 성공 (${latencyMs}ms)`, latencyMs });
-    log.info('health', `OpenAI API 연결 성공 ${latencyMs}ms`);
+    geminiOk = true;
+    checks.push({ name: 'Gemini API', status: 'ok', message: `연결 성공 (${latencyMs}ms)`, latencyMs });
+    log.info('health', `Gemini API 연결 성공 ${latencyMs}ms`);
   } catch (err) {
     const latencyMs = Date.now() - t1;
     const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'OpenAI API', status: 'error', message: `연결 실패: ${msg}`, latencyMs });
-    log.error('health', 'OpenAI API 연결 실패', { error: msg });
+    checks.push({ name: 'Gemini API', status: 'error', message: `연결 실패: ${msg}`, latencyMs });
+    log.error('health', 'Gemini API 연결 실패', { error: msg });
   }
 
-  // ── 3. Vector Store ───────────────────────────────────────────
-  if (vsId) {
+  // ── 3. 업로드 문서 ────────────────────────────────────────────
+  if (geminiOk) {
     const t2 = Date.now();
     try {
       const docs = await listDocuments();
       const latencyMs = Date.now() - t2;
-      const completed = docs.filter((d) => d.status === 'completed').length;
-      const inProgress = docs.filter((d) => d.status !== 'completed').length;
-
-      if (docs.length === 0) {
-        checks.push({ name: 'Vector Store', status: 'warning', message: `문서 없음 (ID: ${vsId.slice(0, 12)}…)`, latencyMs });
-      } else {
-        const detail = inProgress > 0 ? ` (인덱싱 중 ${inProgress}개)` : '';
-        checks.push({
-          name: 'Vector Store',
-          status: inProgress > 0 ? 'warning' : 'ok',
-          message: `${completed}개 완료${detail} · ID: ${vsId.slice(0, 12)}…`,
-          latencyMs,
-        });
-      }
-      log.info('health', `Vector Store 확인 완료: ${docs.length}개 문서`);
+      checks.push({
+        name: '업로드 문서',
+        status: docs.length > 0 ? 'ok' : 'warning',
+        message: docs.length > 0 ? `${docs.length}개 문서 확인됨` : '업로드된 문서 없음',
+        latencyMs,
+      });
+      log.info('health', `업로드 문서 확인 완료: ${docs.length}개`);
     } catch (err) {
       const latencyMs = Date.now() - t2;
       const msg = err instanceof Error ? err.message : String(err);
-      checks.push({ name: 'Vector Store', status: 'error', message: `조회 실패: ${msg}`, latencyMs });
-      log.error('health', 'Vector Store 조회 실패', { error: msg });
+      checks.push({ name: '업로드 문서', status: 'error', message: `조회 실패: ${msg}`, latencyMs });
+      log.error('health', '업로드 문서 조회 실패', { error: msg });
     }
   } else {
-    checks.push({ name: 'Vector Store', status: 'error', message: 'OpenAI 연결 실패로 확인 불가' });
+    checks.push({ name: '업로드 문서', status: 'error', message: 'Gemini 연결 실패로 확인 불가' });
   }
 
   // ── 4. 파일 시스템 ────────────────────────────────────────────
