@@ -67,6 +67,7 @@ export default function AdminPage() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -99,6 +100,31 @@ export default function AdminPage() {
     await fetch('/api/admin/logs', { method: 'DELETE' });
     setLogs([]);
     setStats(null);
+  };
+
+  const copyEntry = (entry: LogEntry, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const lines: string[] = [
+      `[${fmtDate(entry.timestamp)}] ${entry.level.toUpperCase()} [${entry.category}] ${entry.message}${entry.durationMs !== undefined ? ` (${entry.durationMs}ms)` : ''}`,
+    ];
+    if (entry.details) {
+      lines.push(JSON.stringify(entry.details, null, 2));
+    }
+    navigator.clipboard.writeText(lines.join('\n'));
+    setCopiedId(entry.id);
+    setTimeout(() => setCopiedId((prev) => (prev === entry.id ? null : prev)), 1500);
+  };
+
+  const copyAllLogs = () => {
+    const text = logs
+      .map((entry) => {
+        const line = `[${fmtDate(entry.timestamp)}] ${entry.level.toUpperCase()} [${entry.category}] ${entry.message}${entry.durationMs !== undefined ? ` (${entry.durationMs}ms)` : ''}`;
+        return entry.details ? `${line}\n${JSON.stringify(entry.details, null, 2)}` : line;
+      })
+      .join('\n\n');
+    navigator.clipboard.writeText(text);
+    setCopiedId('__all__');
+    setTimeout(() => setCopiedId((prev) => (prev === '__all__' ? null : prev)), 1500);
   };
 
   // ── Initial load ──────────────────────────────────────────────────────
@@ -240,6 +266,15 @@ export default function AdminPage() {
                 {logsLoading ? '…' : '🔄'}
               </button>
 
+              {logs.length > 0 && (
+                <button
+                  onClick={copyAllLogs}
+                  className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  {copiedId === '__all__' ? '✓ 복사됨' : '📋 전체 복사'}
+                </button>
+              )}
+
               <button
                 onClick={clearLogs}
                 className="text-xs bg-red-50 hover:bg-red-100 text-red-500 px-3 py-1.5 rounded-lg transition-colors"
@@ -285,6 +320,13 @@ export default function AdminPage() {
                         {entry.durationMs}ms
                       </span>
                     )}
+                    <button
+                      onClick={(e) => copyEntry(entry, e)}
+                      className="flex-shrink-0 mt-0.5 text-gray-300 hover:text-gray-500 transition-colors px-1"
+                      title="복사"
+                    >
+                      {copiedId === entry.id ? '✓' : '⎘'}
+                    </button>
                     {entry.details && (
                       <span className="text-gray-300 flex-shrink-0 mt-0.5">
                         {expandedLog === entry.id ? '▲' : '▼'}
@@ -292,9 +334,17 @@ export default function AdminPage() {
                     )}
                   </div>
                   {expandedLog === entry.id && entry.details && (
-                    <pre className="mt-2 ml-28 p-2 bg-gray-900 text-green-300 rounded text-[10px] overflow-x-auto whitespace-pre-wrap break-all">
-                      {JSON.stringify(entry.details, null, 2)}
-                    </pre>
+                    <div className="mt-2 ml-28 relative">
+                      <button
+                        onClick={(e) => copyEntry(entry, e)}
+                        className="absolute top-2 right-2 text-[10px] text-gray-400 hover:text-green-300 bg-gray-800 hover:bg-gray-700 px-2 py-0.5 rounded transition-colors z-10"
+                      >
+                        {copiedId === entry.id ? '✓ 복사됨' : '복사'}
+                      </button>
+                      <pre className="p-2 bg-gray-900 text-green-300 rounded text-[10px] overflow-x-auto whitespace-pre-wrap break-all">
+                        {JSON.stringify(entry.details, null, 2)}
+                      </pre>
+                    </div>
                   )}
                 </div>
               ))
