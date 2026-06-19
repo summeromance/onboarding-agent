@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listDocuments, uploadDocument } from '@/lib/rag';
+import { listDocuments, uploadDocument, getLastIndexedAt } from '@/lib/rag';
 import { log } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const documents = await listDocuments();
-    return NextResponse.json({ documents });
+    const lastIndexedAt = getLastIndexedAt();
+    return NextResponse.json({ documents, lastIndexedAt });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.error('documents', `목록 조회 실패: ${msg}`);

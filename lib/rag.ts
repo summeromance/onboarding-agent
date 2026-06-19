@@ -9,10 +9,27 @@ function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
+const LAST_INDEXED_FILE = path.join(process.cwd(), 'uploads', '.last-indexed');
+
 export interface DocInfo {
   id: string;
   filename: string;
   status: string;
+  uploadedAt?: string;
+}
+
+export function getLastIndexedAt(): string | null {
+  try {
+    if (!fs.existsSync(LAST_INDEXED_FILE)) return null;
+    return fs.statSync(LAST_INDEXED_FILE).mtime.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function touchLastIndexed(): void {
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+  fs.writeFileSync(LAST_INDEXED_FILE, new Date().toISOString());
 }
 
 export async function checkGeminiConnectivity(): Promise<void> {
@@ -27,14 +44,19 @@ export async function checkGeminiConnectivity(): Promise<void> {
 export async function listDocuments(): Promise<DocInfo[]> {
   if (!fs.existsSync(UPLOADS_DIR)) return [];
   const files = fs.readdirSync(UPLOADS_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'));
-  return files.map((f) => ({ id: f, filename: f, status: 'completed' }));
+  return files.map((f) => {
+    const uploadedAt = fs.statSync(path.join(UPLOADS_DIR, f)).mtime.toISOString();
+    return { id: f, filename: f, status: 'completed', uploadedAt };
+  });
 }
 
 export async function uploadDocument(filename: string, buffer: Buffer): Promise<DocInfo> {
   if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
   const safeName = path.basename(filename);
   fs.writeFileSync(path.join(UPLOADS_DIR, safeName), buffer);
-  return { id: safeName, filename: safeName, status: 'completed' };
+  touchLastIndexed();
+  const uploadedAt = fs.statSync(path.join(UPLOADS_DIR, safeName)).mtime.toISOString();
+  return { id: safeName, filename: safeName, status: 'completed', uploadedAt };
 }
 
 export async function deleteDocument(fileId: string): Promise<void> {
@@ -46,6 +68,7 @@ export async function deleteDocument(fileId: string): Promise<void> {
 export async function syncBundledPDFs(): Promise<{ uploaded: string[]; skipped: string[] }> {
   if (!fs.existsSync(BUNDLED_DIR)) return { uploaded: [], skipped: [] };
   const pdfs = fs.readdirSync(BUNDLED_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'));
+  touchLastIndexed();
   return { uploaded: [], skipped: pdfs };
 }
 
