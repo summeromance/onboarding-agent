@@ -15,6 +15,7 @@ export interface DocInfo {
   id: string;
   filename: string;
   status: string;
+  source: 'upload' | 'bundled';
   uploadedAt?: string;
 }
 
@@ -42,12 +43,23 @@ export async function checkGeminiConnectivity(): Promise<void> {
 }
 
 export async function listDocuments(): Promise<DocInfo[]> {
-  if (!fs.existsSync(UPLOADS_DIR)) return [];
-  const files = fs.readdirSync(UPLOADS_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'));
-  return files.map((f) => {
-    const uploadedAt = fs.statSync(path.join(UPLOADS_DIR, f)).mtime.toISOString();
-    return { id: f, filename: f, status: 'completed', uploadedAt };
-  });
+  const result: DocInfo[] = [];
+
+  if (fs.existsSync(BUNDLED_DIR)) {
+    for (const f of fs.readdirSync(BUNDLED_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'))) {
+      const uploadedAt = fs.statSync(path.join(BUNDLED_DIR, f)).mtime.toISOString();
+      result.push({ id: `bundled:${f}`, filename: f, status: 'completed', source: 'bundled', uploadedAt });
+    }
+  }
+
+  if (fs.existsSync(UPLOADS_DIR)) {
+    for (const f of fs.readdirSync(UPLOADS_DIR).filter((f) => f.toLowerCase().endsWith('.pdf'))) {
+      const uploadedAt = fs.statSync(path.join(UPLOADS_DIR, f)).mtime.toISOString();
+      result.push({ id: f, filename: f, status: 'completed', source: 'upload', uploadedAt });
+    }
+  }
+
+  return result;
 }
 
 export async function uploadDocument(filename: string, buffer: Buffer): Promise<DocInfo> {
@@ -56,7 +68,7 @@ export async function uploadDocument(filename: string, buffer: Buffer): Promise<
   fs.writeFileSync(path.join(UPLOADS_DIR, safeName), buffer);
   touchLastIndexed();
   const uploadedAt = fs.statSync(path.join(UPLOADS_DIR, safeName)).mtime.toISOString();
-  return { id: safeName, filename: safeName, status: 'completed', uploadedAt };
+  return { id: safeName, filename: safeName, status: 'completed', source: 'upload', uploadedAt };
 }
 
 export async function deleteDocument(fileId: string): Promise<void> {

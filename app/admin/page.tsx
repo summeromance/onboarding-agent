@@ -39,6 +39,7 @@ interface DocInfo {
   id: string;
   filename: string;
   status: string;
+  source: 'upload' | 'bundled';
   uploadedAt?: string;
 }
 
@@ -335,25 +336,34 @@ export default function AdminPage() {
                 <div key={doc.id} className="px-5 py-3 flex items-center gap-3 group hover:bg-gray-50">
                   <span className="text-base flex-shrink-0">📄</span>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-gray-700 truncate">{doc.filename}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm text-gray-700 truncate">{doc.filename}</p>
+                      {doc.source === 'bundled' ? (
+                        <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-200">번들</span>
+                      ) : (
+                        <span className="flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-green-50 text-green-600 border border-green-200">업로드</span>
+                      )}
+                    </div>
                     {doc.uploadedAt && (
                       <p className="text-xs text-gray-400 mt-0.5">{fmtDate(doc.uploadedAt)}</p>
                     )}
                   </div>
-                  <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                    <button
-                      onClick={() => { setReplaceTarget(doc.filename); replaceInputRef.current?.click(); }}
-                      className="text-xs text-blue-500 hover:text-blue-700 px-2 py-1 rounded hover:bg-blue-50 transition-colors"
-                    >
-                      교체
-                    </button>
-                    <button
-                      onClick={() => deleteDoc(doc)}
-                      className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors"
-                    >
-                      삭제
-                    </button>
-                  </div>
+                  {doc.source === 'upload' && (
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button
+                        onClick={() => { setReplaceTarget(doc.filename); replaceInputRef.current?.click(); }}
+                        className="text-xs text-blue-500 hover:text-blue-700 px-2 py-1 rounded hover:bg-blue-50 transition-colors"
+                      >
+                        교체
+                      </button>
+                      <button
+                        onClick={() => deleteDoc(doc)}
+                        className="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors"
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
