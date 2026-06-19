@@ -17,31 +17,31 @@ export async function GET() {
   const startAll = Date.now();
 
   // ── 1. 환경변수 ───────────────────────────────────────────────
-  if (process.env.GOOGLE_API_KEY) {
-    checks.push({ name: '환경변수', status: 'ok', message: 'GOOGLE_API_KEY 설정됨' });
+  if (process.env.OPENAI_API_KEY) {
+    checks.push({ name: '환경변수', status: 'ok', message: 'OPENAI_API_KEY 설정됨' });
   } else {
-    checks.push({ name: '환경변수', status: 'error', message: 'GOOGLE_API_KEY 없음' });
-    log.error('health', 'GOOGLE_API_KEY 환경변수 없음');
+    checks.push({ name: '환경변수', status: 'error', message: 'OPENAI_API_KEY 없음' });
+    log.error('health', 'OPENAI_API_KEY 환경변수 없음');
   }
 
-  // ── 2. Gemini API 연결 ────────────────────────────────────────
+  // ── 2. OpenAI API 연결 ────────────────────────────────────────
   const t1 = Date.now();
-  let geminiOk = false;
+  let openaiOk = false;
   try {
     await checkGeminiConnectivity();
     const latencyMs = Date.now() - t1;
-    geminiOk = true;
-    checks.push({ name: 'Gemini API', status: 'ok', message: `연결 성공 (${latencyMs}ms)`, latencyMs });
-    log.info('health', `Gemini API 연결 성공 ${latencyMs}ms`);
+    openaiOk = true;
+    checks.push({ name: 'OpenAI API', status: 'ok', message: `연결 성공 (${latencyMs}ms)`, latencyMs });
+    log.info('health', `OpenAI API 연결 성공 ${latencyMs}ms`);
   } catch (err) {
     const latencyMs = Date.now() - t1;
     const msg = err instanceof Error ? err.message : String(err);
-    checks.push({ name: 'Gemini API', status: 'error', message: `연결 실패: ${msg}`, latencyMs });
-    log.error('health', 'Gemini API 연결 실패', { error: msg });
+    checks.push({ name: 'OpenAI API', status: 'error', message: `연결 실패: ${msg}`, latencyMs });
+    log.error('health', 'OpenAI API 연결 실패', { error: msg });
   }
 
   // ── 3. 업로드 문서 ────────────────────────────────────────────
-  if (geminiOk) {
+  if (openaiOk) {
     const t2 = Date.now();
     try {
       const docs = await listDocuments();
@@ -60,7 +60,7 @@ export async function GET() {
       log.error('health', '업로드 문서 조회 실패', { error: msg });
     }
   } else {
-    checks.push({ name: '업로드 문서', status: 'error', message: 'Gemini 연결 실패로 확인 불가' });
+    checks.push({ name: '업로드 문서', status: 'error', message: 'OpenAI 연결 실패로 확인 불가' });
   }
 
   // ── 4. 파일 시스템 ────────────────────────────────────────────

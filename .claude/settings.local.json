@@ -5,7 +5,9 @@
       "Bash(vercel ls *)",
       "Bash(gh auth *)",
       "mcp__claude_ai_Vercel__list_teams",
-      "mcp__claude_ai_Vercel__get_project"
+      "mcp__claude_ai_Vercel__get_project",
+      "Bash(npx tsc *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

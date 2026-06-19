@@ -1,12 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 
 export const BUNDLED_DIR = path.join(process.cwd(), 'rag-data');
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 
-function getGenAI(): GoogleGenerativeAI {
-  return new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+function getOpenAI(): OpenAI {
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
 export interface DocInfo {
@@ -16,9 +16,12 @@ export interface DocInfo {
 }
 
 export async function checkGeminiConnectivity(): Promise<void> {
-  const genai = getGenAI();
-  const model = genai.getGenerativeModel({ model: 'models/gemini-3.5-flash' });
-  await model.generateContent('ping');
+  const openai = getOpenAI();
+  await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [{ role: 'user', content: 'ping' }],
+    max_tokens: 1,
+  });
 }
 
 export async function listDocuments(): Promise<DocInfo[]> {
@@ -75,37 +78,30 @@ export async function queryRAG(
   message: string,
   history: { role: 'user' | 'assistant'; content: string }[] = []
 ): Promise<{ answer: string; sources: string[] }> {
-  const genai = getGenAI();
+  const openai = getOpenAI();
   const docTexts = await loadAllDocumentTexts();
   const docsSection =
     docTexts.length > 0
       ? `참고 문서:\n\n${docTexts.join('\n\n---\n\n')}`
       : '현재 업로드된 문서가 없습니다.';
 
-  const model = genai.getGenerativeModel({
-    model: 'models/gemini-3.5-flash',
-    systemInstruction: `당신은 신입사원 온보딩을 도와주는 AI 어시스턴트입니다.
+  const systemPrompt = `당신은 신입사원 온보딩을 도와주는 AI 어시스턴트입니다.
 제공된 회사 문서를 참고하여 신입사원의 질문에 친절하고 정확하게 한국어로 답변하세요.
 문서에 없는 내용은 "해당 내용은 제공된 문서에서 찾을 수 없습니다"라고 솔직하게 말하세요.
 
-${docsSection}`,
+${docsSection}`;
+
+  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemPrompt },
+    ...history.map((h) => ({ role: h.role, content: h.content } as OpenAI.Chat.ChatCompletionMessageParam)),
+    { role: 'user', content: message },
+  ];
+
+  const result = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages,
   });
 
-  // Gemini requires history to start with 'user' role
-  const trimmedHistory = [...history];
-  while (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
-    trimmedHistory.shift();
-  }
-
-  const chat = model.startChat({
-    history: trimmedHistory.map((h) => ({
-      role: h.role === 'user' ? 'user' : 'model',
-      parts: [{ text: h.content }],
-    })),
-  });
-
-  const result = await chat.sendMessage(message);
-  const answer = result.response.text();
-
+  const answer = result.choices[0]?.message?.content ?? '';
   return { answer, sources: [] };
 }
