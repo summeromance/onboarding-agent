@@ -1,15 +1,16 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import OpenAI from 'openai';
 
 export const BUNDLED_DIR = path.join(process.cwd(), 'rag-data');
-const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+const UPLOADS_DIR = path.join(os.tmpdir(), 'uploads');
 
 function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-const LAST_INDEXED_FILE = path.join(process.cwd(), 'uploads', '.last-indexed');
+const LAST_INDEXED_FILE = path.join(os.tmpdir(), '.last-indexed');
 
 export interface DocInfo {
   id: string;
